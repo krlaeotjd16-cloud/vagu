@@ -1,399 +1,227 @@
 --[[
-Volleyball Legends Full Hub v2
+Volleyball Legends Silent Hub v3
 by Onyx
-- 자동 최강 스파이크
-- 자동 풀파워 서브
-- 공 스킨 체인저
+- Silent Aim 스타일 자동 스파이크
+- 풀파워 서브
+- 제대로 작동하는 히트박스
+- 심플 UI
 ]]
 
-local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
-
-local Window = Rayfield:CreateWindow({
-    Name = "Volleyball Legends | Onyx Hub",
-    LoadingTitle = "Volleyball Legends",
-    LoadingSubtitle = "Max Spike + Serve + Skin",
-    ConfigurationSaving = {
-        Enabled = true,
-        FolderName = "VolleyballLegends",
-        FileName = "OnyxConfig"
-    },
-    KeySystem = false
-})
+local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/xHeptc/Kavo-UI-Library/main/source.lua"))()
+local Window = Library.CreateLib("Volleyball Legends | Onyx", "DarkTheme")
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local VirtualUser = game:GetService("VirtualUser")
-local TweenService = game:GetService("TweenService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
 
 local Character, Humanoid, Root
 
-local function refreshChar()
+local function refresh()
     Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     Humanoid = Character:WaitForChild("Humanoid")
     Root = Character:WaitForChild("HumanoidRootPart")
 end
-refreshChar()
-LocalPlayer.CharacterAdded:Connect(refreshChar)
+refresh()
+LocalPlayer.CharacterAdded:Connect(refresh)
 
 -- Config
 local Config = {
-    AutoMaxSpike = false,
-    AutoMaxServe = false,
-    HitboxExpand = false,
-    SpeedEnabled = false,
-    JumpEnabled = false,
-    BallESP = false,
-    AntiAFK = true,
+    SilentSpike = false,
+    AutoServe = false,
+    Hitbox = false,
+    Speed = false,
+    Jump = false,
+    ESP = false,
 
-    WalkSpeed = 28,
-    JumpPower = 70,
-    HitboxSize = 9,
-    HitRange = 14,
-    SpikeDelay = 0.06
+    Range = 18,
+    HitboxSize = 12,
+    WalkSpeed = 26,
+    JumpPower = 65
 }
 
--- 공 찾기
+-- 공 찾기 (더 정확하게)
 local function getBall()
+    local best = nil
+    local bestDist = 999
     for _, v in pairs(workspace:GetDescendants()) do
-        if v:IsA("BasePart") and (string.lower(v.Name):find("ball") or v.Name == "Ball" or v.Name == "Volleyball") then
-            return v
+        if v:IsA("BasePart") then
+            local name = string.lower(v.Name)
+            if name:find("ball") or name == "volleyball" or name == "ball" then
+                if Root then
+                    local d = (Root.Position - v.Position).Magnitude
+                    if d < bestDist then
+                        bestDist = d
+                        best = v
+                    end
+                else
+                    return v
+                end
+            end
         end
     end
-    return nil
+    return best
 end
 
 -- 탭
-local AutoTab = Window:CreateTab("자동 최강", 4483362458)
-local CombatTab = Window:CreateTab("전투", 4483362458)
-local SkinTab = Window:CreateTab("공 스킨", 4483362458)
-local MoveTab = Window:CreateTab("이동", 4483362458)
-local VisualTab = Window:CreateTab("시각", 4483362458)
-local MiscTab = Window:CreateTab("기타", 4483362458)
+local Main = Window:NewTab("메인")
+local MainSec = Main:NewSection("자동")
 
--- ==================== 자동 최강 스파이크 ====================
-AutoTab:CreateToggle({
-    Name = "자동 최강 스파이크",
-    CurrentValue = false,
-    Flag = "AutoMaxSpike",
-    Callback = function(v)
-        Config.AutoMaxSpike = v
-        if v then
-            task.spawn(function()
-                while Config.AutoMaxSpike do
-                    pcall(function()
-                        local ball = getBall()
-                        if ball and Root then
-                            local dist = (Root.Position - ball.Position).Magnitude
-                            if dist <= Config.HitRange then
-                                -- 점프 + 강한 클릭 (스파이크 타이밍)
-                                if Humanoid and Humanoid:GetState() ~= Enum.HumanoidStateType.Freefall then
-                                    Humanoid.Jump = true
-                                end
-                                -- 빠르게 두 번 클릭해서 풀파워 스파이크 유도
-                                VirtualUser:Button1Down(Vector2.new(0,0))
-                                task.wait(0.02)
-                                VirtualUser:Button1Up(Vector2.new(0,0))
-                                task.wait(0.01)
-                                VirtualUser:Button1Down(Vector2.new(0,0))
-                                task.wait(0.02)
-                                VirtualUser:Button1Up(Vector2.new(0,0))
-                            end
+local MoveTab = Window:NewTab("이동")
+local MoveSec = MoveTab:NewSection("이동")
+
+local VisualTab = Window:NewTab("시각")
+local VisualSec = VisualTab:NewSection("ESP")
+
+-- ==================== Silent Spike ====================
+MainSec:NewToggle("사일런트 스파이크 (자동)", "공 근처 오면 자동으로 최강 스파이크", function(v)
+    Config.SilentSpike = v
+    if v then
+        task.spawn(function()
+            while Config.SilentSpike do
+                pcall(function()
+                    local ball = getBall()
+                    if ball and Root and Humanoid then
+                        local dist = (Root.Position - ball.Position).Magnitude
+                        if dist <= Config.Range then
+                            -- 공 쪽으로 살짝 이동
+                            local targetPos = ball.Position + Vector3.new(0, 2, 0)
+                            Root.CFrame = CFrame.new(Root.Position:Lerp(targetPos, 0.4))
+                            
+                            -- 점프
+                            Humanoid.Jump = true
+                            
+                            -- 강제 클릭 (스파이크)
+                            VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
+                            task.wait(0.03)
+                            VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
                         end
-                    end)
-                    task.wait(Config.SpikeDelay)
-                end
-            end)
-        end
-    end
-})
-
-AutoTab:CreateSlider({
-    Name = "스파이크 범위",
-    Range = {6, 25},
-    Increment = 1,
-    CurrentValue = 14,
-    Flag = "HitRange",
-    Callback = function(v) Config.HitRange = v end
-})
-
-AutoTab:CreateSlider({
-    Name = "스파이크 딜레이",
-    Range = {0.03, 0.2},
-    Increment = 0.01,
-    CurrentValue = 0.06,
-    Flag = "SpikeDelay",
-    Callback = function(v) Config.SpikeDelay = v end
-})
-
--- ==================== 자동 풀파워 서브 ====================
-AutoTab:CreateToggle({
-    Name = "자동 풀파워 서브",
-    CurrentValue = false,
-    Flag = "AutoMaxServe",
-    Callback = function(v)
-        Config.AutoMaxServe = v
-        if v then
-            task.spawn(function()
-                while Config.AutoMaxServe do
-                    pcall(function()
-                        -- 서브 차례일 때 빠르게 더블클릭으로 풀파워
-                        -- (게임이 서브 모드일 때 클릭 감지)
-                        VirtualUser:Button1Down(Vector2.new(0,0))
-                        task.wait(0.015)
-                        VirtualUser:Button1Up(Vector2.new(0,0))
-                        task.wait(0.01)
-                        VirtualUser:Button1Down(Vector2.new(0,0))
-                        task.wait(0.015)
-                        VirtualUser:Button1Up(Vector2.new(0,0))
-                    end)
-                    task.wait(0.4) -- 서브 쿨타임 비슷하게
-                end
-            end)
-        end
-    end
-})
-
--- ==================== 히트박스 ====================
-CombatTab:CreateToggle({
-    Name = "히트박스 확장",
-    CurrentValue = false,
-    Flag = "HitboxExpand",
-    Callback = function(v)
-        Config.HitboxExpand = v
-        if v then
-            task.spawn(function()
-                while Config.HitboxExpand do
-                    pcall(function()
-                        local ball = getBall()
-                        if ball then
-                            ball.Size = Vector3.new(Config.HitboxSize, Config.HitboxSize, Config.HitboxSize)
-                            ball.Transparency = 0.55
-                            ball.CanCollide = false
-                        end
-                    end)
-                    task.wait(0.08)
-                end
-            end)
-        else
-            local ball = getBall()
-            if ball then
-                ball.Size = Vector3.new(1.2, 1.2, 1.2)
-                ball.Transparency = 0
-            end
-        end
-    end
-})
-
-CombatTab:CreateSlider({
-    Name = "히트박스 크기",
-    Range = {2, 18},
-    Increment = 0.5,
-    CurrentValue = 9,
-    Flag = "HitboxSize",
-    Callback = function(v) Config.HitboxSize = v end
-})
-
--- ==================== 공 스킨 체인저 ====================
-local SkinColors = {
-    ["기본 흰색"] = Color3.fromRGB(255, 255, 255),
-    ["네온 초록"] = Color3.fromRGB(0, 255, 100),
-    ["네온 핑크"] = Color3.fromRGB(255, 0, 150),
-    ["네온 파랑"] = Color3.fromRGB(0, 150, 255),
-    ["네온 노랑"] = Color3.fromRGB(255, 255, 0),
-    ["네온 보라"] = Color3.fromRGB(180, 0, 255),
-    ["블랙"] = Color3.fromRGB(20, 20, 20),
-    ["레드 글로우"] = Color3.fromRGB(255, 40, 40),
-    ["골드"] = Color3.fromRGB(255, 200, 50),
-    ["레인보우"] = "rainbow"
-}
-
-local CurrentSkin = "네온 초록"
-local RainbowConnection = nil
-
-local function applyBallSkin(colorName)
-    local ball = getBall()
-    if not ball then return end
-
-    if RainbowConnection then
-        RainbowConnection:Disconnect()
-        RainbowConnection = nil
-    end
-
-    if colorName == "레인보우" then
-        local hue = 0
-        RainbowConnection = RunService.RenderStepped:Connect(function()
-            hue = (hue + 0.005) % 1
-            if ball and ball.Parent then
-                ball.Color = Color3.fromHSV(hue, 1, 1)
-                ball.Material = Enum.Material.Neon
+                    end
+                end)
+                task.wait(0.05)
             end
         end)
-    else
-        local col = SkinColors[colorName]
-        if col then
-            ball.Color = col
-            ball.Material = Enum.Material.Neon
-            ball.Reflectance = 0.3
-        end
-    end
-end
-
-SkinTab:CreateDropdown({
-    Name = "공 스킨 선택",
-    Options = {"기본 흰색", "네온 초록", "네온 핑크", "네온 파랑", "네온 노랑", "네온 보라", "블랙", "레드 글로우", "골드", "레인보우"},
-    CurrentOption = {"네온 초록"},
-    Flag = "BallSkin",
-    Callback = function(opt)
-        CurrentSkin = opt[1] or opt
-        applyBallSkin(CurrentSkin)
-    end
-})
-
-SkinTab:CreateButton({
-    Name = "지금 공에 스킨 적용",
-    Callback = function()
-        applyBallSkin(CurrentSkin)
-        Rayfield:Notify({Title = "스킨", Content = CurrentSkin .. " 적용됨", Duration = 3})
-    end
-})
-
-SkinTab:CreateToggle({
-    Name = "스킨 자동 유지 (공 바뀔 때마다)",
-    CurrentValue = true,
-    Flag = "KeepSkin",
-    Callback = function(v)
-        if v then
-            task.spawn(function()
-                while true do
-                    applyBallSkin(CurrentSkin)
-                    task.wait(1.5)
-                end
-            end)
-        end
-    end
-})
-
--- ==================== 이동 ====================
-MoveTab:CreateToggle({
-    Name = "스피드",
-    CurrentValue = false,
-    Flag = "Speed",
-    Callback = function(v)
-        Config.SpeedEnabled = v
-        if Humanoid then
-            Humanoid.WalkSpeed = v and Config.WalkSpeed or 16
-        end
-    end
-})
-
-MoveTab:CreateSlider({
-    Name = "WalkSpeed",
-    Range = {16, 45},
-    Increment = 1,
-    CurrentValue = 28,
-    Flag = "WalkSpeed",
-    Callback = function(v)
-        Config.WalkSpeed = v
-        if Config.SpeedEnabled and Humanoid then
-            Humanoid.WalkSpeed = v
-        end
-    end
-})
-
-MoveTab:CreateToggle({
-    Name = "점프 부스트",
-    CurrentValue = false,
-    Flag = "Jump",
-    Callback = function(v)
-        Config.JumpEnabled = v
-        if Humanoid then
-            Humanoid.JumpPower = v and Config.JumpPower or 50
-        end
-    end
-})
-
-MoveTab:CreateSlider({
-    Name = "JumpPower",
-    Range = {50, 110},
-    Increment = 5,
-    CurrentValue = 70,
-    Flag = "JumpPower",
-    Callback = function(v)
-        Config.JumpPower = v
-        if Config.JumpEnabled and Humanoid then
-            Humanoid.JumpPower = v
-        end
-    end
-})
-
--- ==================== 시각 ====================
-local BallHighlight = nil
-
-VisualTab:CreateToggle({
-    Name = "공 하이라이트 ESP",
-    CurrentValue = false,
-    Flag = "BallESP",
-    Callback = function(v)
-        Config.BallESP = v
-        if not v and BallHighlight then
-            BallHighlight:Destroy()
-            BallHighlight = nil
-        end
-        if v then
-            task.spawn(function()
-                while Config.BallESP do
-                    pcall(function()
-                        local ball = getBall()
-                        if ball then
-                            if not BallHighlight or BallHighlight.Adornee ~= ball then
-                                if BallHighlight then BallHighlight:Destroy() end
-                                BallHighlight = Instance.new("Highlight")
-                                BallHighlight.FillColor = Color3.fromRGB(0, 255, 120)
-                                BallHighlight.OutlineColor = Color3.fromRGB(255, 255, 255)
-                                BallHighlight.FillTransparency = 0.35
-                                BallHighlight.Adornee = ball
-                                BallHighlight.Parent = ball
-                            end
-                        end
-                    end)
-                    task.wait(0.15)
-                end
-            end)
-        end
-    end
-})
-
--- ==================== 기타 ====================
-MiscTab:CreateToggle({
-    Name = "안티 AFK",
-    CurrentValue = true,
-    Flag = "AntiAFK",
-    Callback = function(v) Config.AntiAFK = v end
-})
-
-task.spawn(function()
-    while true do
-        if Config.AntiAFK then
-            pcall(function()
-                VirtualUser:CaptureController()
-                VirtualUser:ClickButton2(Vector2.new())
-            end)
-        end
-        task.wait(35)
     end
 end)
 
-MiscTab:CreateButton({
-    Name = "캐릭터 리스폰",
-    Callback = function()
-        if Humanoid then Humanoid.Health = 0 end
-    end
-})
+MainSec:NewSlider("스파이크 범위", "얼마나 멀리 있는 공까지 칠지", 6, 30, 18, function(v)
+    Config.Range = v
+end)
 
-Rayfield:Notify({
-    Title = "Onyx Hub",
-    Content = "최강 스파이크 + 풀파워 서브 + 스킨 준비 완료",
-    Duration = 5
-})
+-- ==================== Auto Serve ====================
+MainSec:NewToggle("자동 풀파워 서브", "서브 차례에 최대 파워로 때림", function(v)
+    Config.AutoServe = v
+    if v then
+        task.spawn(function()
+            while Config.AutoServe do
+                pcall(function()
+                    -- 서브 시작 + 풀파워
+                    VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
+                    task.wait(0.02)
+                    VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
+                    task.wait(0.08)
+                    VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
+                    task.wait(0.02)
+                    VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
+                end)
+                task.wait(0.5)
+            end
+        end)
+    end
+end)
+
+-- ==================== Hitbox ====================
+MainSec:NewToggle("히트박스 확장", "공을 크게 만듦", function(v)
+    Config.Hitbox = v
+    if v then
+        task.spawn(function()
+            while Config.Hitbox do
+                pcall(function()
+                    local ball = getBall()
+                    if ball then
+                        ball.Size = Vector3.new(Config.HitboxSize, Config.HitboxSize, Config.HitboxSize)
+                        ball.Transparency = 0.5
+                        ball.CanCollide = true
+                        ball.Material = Enum.Material.ForceField
+                    end
+                end)
+                task.wait(0.07)
+            end
+        end)
+    else
+        local ball = getBall()
+        if ball then
+            ball.Size = Vector3.new(1.5, 1.5, 1.5)
+            ball.Transparency = 0
+            ball.Material = Enum.Material.Plastic
+        end
+    end
+end)
+
+MainSec:NewSlider("히트박스 크기", "", 3, 20, 12, function(v)
+    Config.HitboxSize = v
+end)
+
+-- ==================== 이동 ====================
+MoveSec:NewToggle("스피드", "", function(v)
+    Config.Speed = v
+    if Humanoid then
+        Humanoid.WalkSpeed = v and Config.WalkSpeed or 16
+    end
+end)
+
+MoveSec:NewSlider("WalkSpeed", "", 16, 40, 26, function(v)
+    Config.WalkSpeed = v
+    if Config.Speed and Humanoid then
+        Humanoid.WalkSpeed = v
+    end
+end)
+
+MoveSec:NewToggle("점프 부스트", "", function(v)
+    Config.Jump = v
+    if Humanoid then
+        Humanoid.JumpPower = v and Config.JumpPower or 50
+    end
+end)
+
+MoveSec:NewSlider("JumpPower", "", 50, 100, 65, function(v)
+    Config.JumpPower = v
+    if Config.Jump and Humanoid then
+        Humanoid.JumpPower = v
+    end
+end)
+
+-- ==================== ESP ====================
+local highlight = nil
+
+VisualSec:NewToggle("공 ESP", "", function(v)
+    Config.ESP = v
+    if not v and highlight then
+        highlight:Destroy()
+        highlight = nil
+    end
+    if v then
+        task.spawn(function()
+            while Config.ESP do
+                pcall(function()
+                    local ball = getBall()
+                    if ball then
+                        if not highlight or highlight.Adornee ~= ball then
+                            if highlight then highlight:Destroy() end
+                            highlight = Instance.new("Highlight")
+                            highlight.FillColor = Color3.fromRGB(0, 255, 100)
+                            highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+                            highlight.FillTransparency = 0.3
+                            highlight.Adornee = ball
+                            highlight.Parent = ball
+                        end
+                    end
+                end)
+                task.wait(0.1)
+            end
+        end)
+    end
+end)
+
+print("Onyx Silent Hub 로드 완료")
