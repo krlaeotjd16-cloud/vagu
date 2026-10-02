@@ -1,18 +1,17 @@
 --[[
-Volleyball Legends Silent Hub v3
+Volleyball Legends Silent Hub v4
 by Onyx
-- Silent Aim 스타일 자동 스파이크
-- 풀파워 서브
-- 제대로 작동하는 히트박스
-- 심플 UI
+- 필요할 때만 스파이크
+- 자연스러운 이동
+- 딜레이 최소화
+- 숫자 직접 입력
 ]]
 
 local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/xHeptc/Kavo-UI-Library/main/source.lua"))()
-local Window = Library.CreateLib("Volleyball Legends | Onyx", "DarkTheme")
+local Window = Library.CreateLib("Volleyball Legends | Onyx v4", "DarkTheme")
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local LocalPlayer = Players.LocalPlayer
 
@@ -35,20 +34,22 @@ local Config = {
     Jump = false,
     ESP = false,
 
-    Range = 18,
-    HitboxSize = 12,
-    WalkSpeed = 26,
-    JumpPower = 65
+    Range = 16,          -- 최대 추천 25
+    HitboxSize = 10,     -- 최대 추천 20
+    WalkSpeed = 24,      -- 최대 추천 35
+    JumpPower = 60,      -- 최대 추천 90
+    SpikeCooldown = 0.001
 }
 
--- 공 찾기 (더 정확하게)
+local lastSpike = 0
+
+-- 공 찾기
 local function getBall()
-    local best = nil
-    local bestDist = 999
+    local best, bestDist = nil, 999
     for _, v in pairs(workspace:GetDescendants()) do
         if v:IsA("BasePart") then
-            local name = string.lower(v.Name)
-            if name:find("ball") or name == "volleyball" or name == "ball" then
+            local n = string.lower(v.Name)
+            if n:find("ball") or n == "volleyball" then
                 if Root then
                     local d = (Root.Position - v.Position).Magnitude
                     if d < bestDist then
@@ -66,16 +67,19 @@ end
 
 -- 탭
 local Main = Window:NewTab("메인")
-local MainSec = Main:NewSection("자동")
+local MainSec = Main:NewSection("자동 기능")
 
-local MoveTab = Window:NewTab("이동")
-local MoveSec = MoveTab:NewSection("이동")
+local Set = Window:NewTab("수치 설정")
+local SetSec = Set:NewSection("직접 입력 (최대값 참고)")
 
-local VisualTab = Window:NewTab("시각")
-local VisualSec = VisualTab:NewSection("ESP")
+local Move = Window:NewTab("이동")
+local MoveSec = Move:NewSection("이동")
 
--- ==================== Silent Spike ====================
-MainSec:NewToggle("사일런트 스파이크 (자동)", "공 근처 오면 자동으로 최강 스파이크", function(v)
+local Visual = Window:NewTab("시각")
+local VisSec = Visual:NewSection("ESP")
+
+-- ==================== 필요할 때만 스파이크 ====================
+MainSec:NewToggle("사일런트 스파이크 (필요할 때만)", "공 가까이 + 공중일 때만 작동", function(v)
     Config.SilentSpike = v
     if v then
         task.spawn(function()
@@ -84,55 +88,60 @@ MainSec:NewToggle("사일런트 스파이크 (자동)", "공 근처 오면 자�
                     local ball = getBall()
                     if ball and Root and Humanoid then
                         local dist = (Root.Position - ball.Position).Magnitude
-                        if dist <= Config.Range then
-                            -- 공 쪽으로 살짝 이동
-                            local targetPos = ball.Position + Vector3.new(0, 2, 0)
-                            Root.CFrame = CFrame.new(Root.Position:Lerp(targetPos, 0.4))
-                            
-                            -- 점프
-                            Humanoid.Jump = true
-                            
-                            -- 강제 클릭 (스파이크)
-                            VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
-                            task.wait(0.03)
-                            VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
+                        local inAir = Humanoid:GetState() == Enum.HumanoidStateType.Freefall or Humanoid:GetState() == Enum.HumanoidStateType.Jumping
+                        
+                        -- 필요할 때만: 거리 안 + 공중이거나 점프 직전
+                        if dist <= Config.Range and (inAir or dist < 8) then
+                            if tick() - lastSpike > Config.SpikeCooldown then
+                                lastSpike = tick()
+                                
+                                -- 자연스럽게 공 방향으로 살짝 이동 (텔레포트 아님)
+                                local dir = (ball.Position - Root.Position).Unit
+                                Root.AssemblyLinearVelocity = Vector3.new(dir.X * 18, Root.AssemblyLinearVelocity.Y, dir.Z * 18)
+                                
+                                -- 점프가 안 되어 있으면 점프
+                                if not inAir then
+                                    Humanoid.Jump = true
+                                end
+                                
+                                -- 클릭
+                                VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
+                                task.wait(0.008)
+                                VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
+                            end
                         end
                     end
                 end)
-                task.wait(0.05)
+                task.wait(0.001) -- 거의 0
             end
         end)
     end
 end)
 
-MainSec:NewSlider("스파이크 범위", "얼마나 멀리 있는 공까지 칠지", 6, 30, 18, function(v)
-    Config.Range = v
-end)
-
--- ==================== Auto Serve ====================
-MainSec:NewToggle("자동 풀파워 서브", "서브 차례에 최대 파워로 때림", function(v)
+MainSec:NewToggle("자동 풀파워 서브", "서브 때 최대 파워", function(v)
     Config.AutoServe = v
     if v then
         task.spawn(function()
             while Config.AutoServe do
                 pcall(function()
-                    -- 서브 시작 + 풀파워
                     VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
-                    task.wait(0.02)
+                    task.wait(0.01)
                     VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
-                    task.wait(0.08)
+                    task.wait(0.05)
                     VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
-                    task.wait(0.02)
+                    task.wait(0.01)
                     VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
                 end)
-                task.wait(0.5)
+                task.wait(0.45)
             end
         end)
     end
 end)
 
--- ==================== Hitbox ====================
-MainSec:NewToggle("히트박스 확장", "공을 크게 만듦", function(v)
+-- ==================== 히트박스 (제대로 붙게) ====================
+local hitboxPart = nil
+
+MainSec:NewToggle("히트박스 확장", "공에 강제 부착", function(v)
     Config.Hitbox = v
     if v then
         task.spawn(function()
@@ -140,41 +149,69 @@ MainSec:NewToggle("히트박스 확장", "공을 크게 만듦", function(v)
                 pcall(function()
                     local ball = getBall()
                     if ball then
-                        ball.Size = Vector3.new(Config.HitboxSize, Config.HitboxSize, Config.HitboxSize)
-                        ball.Transparency = 0.5
-                        ball.CanCollide = true
-                        ball.Material = Enum.Material.ForceField
+                        if not hitboxPart or not hitboxPart.Parent then
+                            hitboxPart = Instance.new("Part")
+                            hitboxPart.Name = "OnyxHitbox"
+                            hitboxPart.Anchored = true
+                            hitboxPart.CanCollide = false
+                            hitboxPart.Transparency = 0.6
+                            hitboxPart.Material = Enum.Material.ForceField
+                            hitboxPart.Color = Color3.fromRGB(0, 255, 100)
+                            hitboxPart.Parent = workspace
+                        end
+                        hitboxPart.Size = Vector3.new(Config.HitboxSize, Config.HitboxSize, Config.HitboxSize)
+                        hitboxPart.CFrame = ball.CFrame
                     end
                 end)
-                task.wait(0.07)
+                task.wait(0.001)
             end
         end)
     else
-        local ball = getBall()
-        if ball then
-            ball.Size = Vector3.new(1.5, 1.5, 1.5)
-            ball.Transparency = 0
-            ball.Material = Enum.Material.Plastic
+        if hitboxPart then
+            hitboxPart:Destroy()
+            hitboxPart = nil
         end
     end
 end)
 
-MainSec:NewSlider("히트박스 크기", "", 3, 20, 12, function(v)
-    Config.HitboxSize = v
+-- ==================== 수치 직접 입력 ====================
+SetSec:NewTextBox("스파이크 범위 (최대 25 추천)", "숫자 입력", function(txt)
+    local n = tonumber(txt)
+    if n then Config.Range = math.clamp(n, 1, 40) end
 end)
+
+SetSec:NewTextBox("히트박스 크기 (최대 20 추천)", "숫자 입력", function(txt)
+    local n = tonumber(txt)
+    if n then Config.HitboxSize = math.clamp(n, 1, 30) end
+end)
+
+SetSec:NewTextBox("WalkSpeed (최대 35 추천)", "숫자 입력", function(txt)
+    local n = tonumber(txt)
+    if n then
+        Config.WalkSpeed = math.clamp(n, 16, 50)
+        if Config.Speed and Humanoid then
+            Humanoid.WalkSpeed = Config.WalkSpeed
+        end
+    end
+end)
+
+SetSec:NewTextBox("JumpPower (최대 90 추천)", "숫자 입력", function(txt)
+    local n = tonumber(txt)
+    if n then
+        Config.JumpPower = math.clamp(n, 50, 120)
+        if Config.Jump and Humanoid then
+            Humanoid.JumpPower = Config.JumpPower
+        end
+    end
+end)
+
+SetSec:NewLabel("현재 값 확인은 토글 켠 뒤 직접 체감하면 됨")
 
 -- ==================== 이동 ====================
 MoveSec:NewToggle("스피드", "", function(v)
     Config.Speed = v
     if Humanoid then
         Humanoid.WalkSpeed = v and Config.WalkSpeed or 16
-    end
-end)
-
-MoveSec:NewSlider("WalkSpeed", "", 16, 40, 26, function(v)
-    Config.WalkSpeed = v
-    if Config.Speed and Humanoid then
-        Humanoid.WalkSpeed = v
     end
 end)
 
@@ -185,21 +222,14 @@ MoveSec:NewToggle("점프 부스트", "", function(v)
     end
 end)
 
-MoveSec:NewSlider("JumpPower", "", 50, 100, 65, function(v)
-    Config.JumpPower = v
-    if Config.Jump and Humanoid then
-        Humanoid.JumpPower = v
-    end
-end)
-
 -- ==================== ESP ====================
-local highlight = nil
+local hl = nil
 
-VisualSec:NewToggle("공 ESP", "", function(v)
+VisSec:NewToggle("공 ESP", "", function(v)
     Config.ESP = v
-    if not v and highlight then
-        highlight:Destroy()
-        highlight = nil
+    if not v and hl then
+        hl:Destroy()
+        hl = nil
     end
     if v then
         task.spawn(function()
@@ -207,21 +237,21 @@ VisualSec:NewToggle("공 ESP", "", function(v)
                 pcall(function()
                     local ball = getBall()
                     if ball then
-                        if not highlight or highlight.Adornee ~= ball then
-                            if highlight then highlight:Destroy() end
-                            highlight = Instance.new("Highlight")
-                            highlight.FillColor = Color3.fromRGB(0, 255, 100)
-                            highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
-                            highlight.FillTransparency = 0.3
-                            highlight.Adornee = ball
-                            highlight.Parent = ball
+                        if not hl or hl.Adornee ~= ball then
+                            if hl then hl:Destroy() end
+                            hl = Instance.new("Highlight")
+                            hl.FillColor = Color3.fromRGB(0, 255, 100)
+                            hl.OutlineColor = Color3.fromRGB(255, 255, 255)
+                            hl.FillTransparency = 0.35
+                            hl.Adornee = ball
+                            hl.Parent = ball
                         end
                     end
                 end)
-                task.wait(0.1)
+                task.wait(0.05)
             end
         end)
     end
 end)
 
-print("Onyx Silent Hub 로드 완료")
+print("[Onyx] v4 로드 완료 - 필요할 때만 스파이크 + 숫자 입력 지원")
