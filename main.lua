@@ -1,257 +1,385 @@
---[[
-Volleyball Legends Silent Hub v4
-by Onyx
-- 필요할 때만 스파이크
-- 자연스러운 이동
-- 딜레이 최소화
-- 숫자 직접 입력
-]]
-
-local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/xHeptc/Kavo-UI-Library/main/source.lua"))()
-local Window = Library.CreateLib("Volleyball Legends | Onyx v4", "DarkTheme")
-
+-- TTK Full | ESP + Fullbright + Silent + Aim + Kill Banner + Spin + Trigger + 3rd Person + GUI
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local VirtualInputManager = game:GetService("VirtualInputManager")
+local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Lighting = game:GetService("Lighting")
+local Workspace = game:GetService("Workspace")
+local TweenService = game:GetService("TweenService")
 local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
 
-local Character, Humanoid, Root
-
-local function refresh()
-    Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-    Humanoid = Character:WaitForChild("Humanoid")
-    Root = Character:WaitForChild("HumanoidRootPart")
-end
-refresh()
-LocalPlayer.CharacterAdded:Connect(refresh)
-
--- Config
 local Config = {
-    SilentSpike = false,
-    AutoServe = false,
-    Hitbox = false,
-    Speed = false,
-    Jump = false,
-    ESP = false,
-
-    Range = 16,          -- 최대 추천 25
-    HitboxSize = 10,     -- 최대 추천 20
-    WalkSpeed = 24,      -- 최대 추천 35
-    JumpPower = 60,      -- 최대 추천 90
-    SpikeCooldown = 0.001
+    Fullbright = true,
+    ESP = true,
+    SilentAim = true,
+    CameraAim = true,
+    Triggerbot = false,
+    Spin = false,
+    ThirdPerson = true,
+    AimKey = Enum.UserInputType.MouseButton2,
+    AimPart = "Head",
+    FOV = 180,
+    ShowFOV = true,
+    Smooth = 0.35,
+    TeamCheck = true,
+    ShowAlly = true,
+    MaxESPDistance = 5000,
+    KillBanner = true,
+    SpinSpeed = 25
 }
 
-local lastSpike = 0
+-- Fullbright
+local function applyFullbright()
+    if not Config.Fullbright then return end
+    Lighting.Brightness = 2
+    Lighting.ClockTime = 14
+    Lighting.FogEnd = 100000
+    Lighting.GlobalShadows = false
+    Lighting.OutdoorAmbient = Color3.fromRGB(180,180,180)
+    Lighting.Ambient = Color3.fromRGB(150,150,150)
+    Lighting.ExposureCompensation = 0.3
+end
+RunService.Heartbeat:Connect(applyFullbright)
 
--- 공 찾기
-local function getBall()
-    local best, bestDist = nil, 999
-    for _, v in pairs(workspace:GetDescendants()) do
-        if v:IsA("BasePart") then
-            local n = string.lower(v.Name)
-            if n:find("ball") or n == "volleyball" then
-                if Root then
-                    local d = (Root.Position - v.Position).Magnitude
-                    if d < bestDist then
-                        bestDist = d
-                        best = v
+-- 3rd Person Force
+local function forceThirdPerson()
+    if not Config.ThirdPerson then return end
+    pcall(function()
+        LocalPlayer.CameraMode = Enum.CameraMode.Classic
+        LocalPlayer.CameraMaxZoomDistance = 128
+        LocalPlayer.CameraMinZoomDistance = 10
+    end)
+end
+RunService.Heartbeat:Connect(forceThirdPerson)
+
+-- GunController Hook
+local GunController
+pcall(function() GunController = require(ReplicatedStorage.Modules.Client.Controllers.GunController) end)
+local Orig_GetFireDir = GunController and GunController.GetFireDirection
+local currentTarget = nil
+
+if GunController then
+    GunController.GetFireDirection = function(self, ...)
+        if Config.SilentAim and currentTarget and currentTarget.Character then
+            local part = currentTarget.Character:FindFirstChild(Config.AimPart) or currentTarget.Character:FindFirstChild("HumanoidRootPart")
+            if part then
+                local muzzle = Camera.CFrame.Position
+                pcall(function()
+                    local cf = self:GetActiveProjectileMuzzleWorldCFrame()
+                    if cf then muzzle = cf.Position end
+                end)
+                return (part.Position - muzzle).Unit
+            end
+        end
+        if Orig_GetFireDir then return Orig_GetFireDir(self, ...) end
+    end
+end
+
+-- Helpers
+local function isTeammate(p)
+    if not Config.TeamCheck then return false end
+    if p == LocalPlayer then return true end
+    local a, b = LocalPlayer:GetAttribute("Team"), p:GetAttribute("Team")
+    if a and b and a == b then return true end
+    if LocalPlayer.Team and p.Team and LocalPlayer.Team == p.Team then return true end
+    return false
+end
+
+local function isAlive(model)
+    if not model or model.Name:find("_Corpse") then return false end
+    local hum = model:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return false end
+    return true
+end
+
+local function isAllyModel(model)
+    return model:FindFirstChild("AllyTeamHighlight") ~= nil
+end
+
+-- ESP
+local highlights = {}
+local drawings = {}
+
+local function createDraw(cls)
+    local d = Drawing.new(cls)
+    d.Visible = false
+    return d
+end
+
+local function clearESP(key)
+    if highlights[key] then pcall(function() highlights[key]:Destroy() end) highlights[key] = nil end
+    if drawings[key] then
+        for _, v in pairs(drawings[key]) do pcall(function() v:Remove() end) end
+        drawings[key] = nil
+    end
+end
+
+local function updateESP()
+    if not Config.ESP then
+        for k in pairs(highlights) do clearESP(k) end
+        for k in pairs(drawings) do clearESP(k) end
+        return
+    end
+
+    local folder = Workspace:FindFirstChild("MercPlayers")
+    if not folder then return end
+
+    local seen = {}
+    local bottom = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y)
+
+    for _, model in pairs(folder:GetChildren()) do
+        if model.Name:match("^MercHitboxes_") and not model.Name:find(LocalPlayer.Name) and isAlive(model) then
+            local key = model.Name
+            local ally = isAllyModel(model)
+            if ally and not Config.ShowAlly then clearESP(key) continue end
+
+            local root = model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("UpperTorso")
+            local hum = model:FindFirstChildOfClass("Humanoid")
+            if not root then clearESP(key) continue end
+
+            local dist = (Camera.CFrame.Position - root.Position).Magnitude
+            if dist > Config.MaxESPDistance then clearESP(key) continue end
+
+            local pos, on = Camera:WorldToViewportPoint(root.Position)
+            if not on or pos.Z < 0 then
+                if drawings[key] then for _, v in pairs(drawings[key]) do v.Visible = false end end
+                continue
+            end
+
+            seen[key] = true
+            local color = ally and Color3.fromRGB(80,230,110) or Color3.fromRGB(255,50,50)
+
+            if not highlights[key] or not highlights[key].Parent then
+                if highlights[key] then pcall(function() highlights[key]:Destroy() end) end
+                local h = Instance.new("Highlight")
+                h.FillTransparency = 0.7
+                h.OutlineTransparency = 0.1
+                h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                h.Parent = model
+                highlights[key] = h
+            end
+            highlights[key].OutlineColor = color
+            highlights[key].FillColor = color
+
+            if not drawings[key] then
+                drawings[key] = { Text = createDraw("Text"), Line = createDraw("Line") }
+                drawings[key].Text.Size = 13
+                drawings[key].Text.Center = true
+                drawings[key].Text.Outline = true
+            end
+
+            local d = drawings[key]
+            local txt = (hum and math.floor(hum.Health).." HP" or "") .. "\n" .. math.floor(dist) .. "m"
+            d.Text.Text = txt
+            d.Text.Color = color
+            d.Text.Position = Vector2.new(pos.X, pos.Y + 28)
+            d.Text.Visible = true
+
+            d.Line.From = bottom
+            d.Line.To = Vector2.new(pos.X, pos.Y)
+            d.Line.Color = color
+            d.Line.Thickness = 1.2
+            d.Line.Visible = true
+        else
+            clearESP(model.Name)
+        end
+    end
+
+    for k in pairs(highlights) do if not seen[k] then clearESP(k) end end
+    for k in pairs(drawings) do if not seen[k] then clearESP(k) end end
+end
+
+-- Aim Target
+local function getTarget()
+    local closest, best = nil, Config.FOV
+    local center = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and not isTeammate(p) and p.Character then
+            local hum = p.Character:FindFirstChildOfClass("Humanoid")
+            if hum and hum.Health > 0 then
+                local part = p.Character:FindFirstChild(Config.AimPart) or p.Character:FindFirstChild("HumanoidRootPart")
+                if part then
+                    local screen, on = Camera:WorldToViewportPoint(part.Position)
+                    if on then
+                        local mag = (Vector2.new(screen.X, screen.Y) - center).Magnitude
+                        if mag < best then
+                            best = mag
+                            closest = p
+                        end
                     end
-                else
-                    return v
                 end
             end
         end
     end
-    return best
+    return closest
 end
 
--- 탭
-local Main = Window:NewTab("메인")
-local MainSec = Main:NewSection("자동 기능")
+local fovCircle = Drawing.new("Circle")
+fovCircle.Thickness = 1.5
+fovCircle.NumSides = 64
+fovCircle.Filled = false
+fovCircle.Color = Color3.fromRGB(0,230,180)
+fovCircle.Transparency = 0.7
+fovCircle.Visible = false
 
-local Set = Window:NewTab("수치 설정")
-local SetSec = Set:NewSection("직접 입력 (최대값 참고)")
+-- Kill Banner
+local BannerGui = Instance.new("ScreenGui")
+BannerGui.Name = "KillBanner"
+BannerGui.ResetOnSpawn = false
+BannerGui.Parent = game:GetService("CoreGui")
 
-local Move = Window:NewTab("이동")
-local MoveSec = Move:NewSection("이동")
+local Banner = Instance.new("Frame")
+Banner.Size = UDim2.new(0, 380, 0, 46)
+Banner.Position = UDim2.new(0.5, -190, 0, -60)
+Banner.BackgroundColor3 = Color3.fromRGB(12, 12, 18)
+Banner.BackgroundTransparency = 0.15
+Banner.BorderSizePixel = 0
+Banner.Visible = false
+Banner.Parent = BannerGui
 
-local Visual = Window:NewTab("시각")
-local VisSec = Visual:NewSection("ESP")
+Instance.new("UICorner", Banner).CornerRadius = UDim.new(0, 8)
+local stroke = Instance.new("UIStroke", Banner)
+stroke.Color = Color3.fromRGB(255, 60, 60)
+stroke.Thickness = 1.5
 
--- ==================== 필요할 때만 스파이크 ====================
-MainSec:NewToggle("사일런트 스파이크 (필요할 때만)", "공 가까이 + 공중일 때만 작동", function(v)
-    Config.SilentSpike = v
-    if v then
-        task.spawn(function()
-            while Config.SilentSpike do
-                pcall(function()
-                    local ball = getBall()
-                    if ball and Root and Humanoid then
-                        local dist = (Root.Position - ball.Position).Magnitude
-                        local inAir = Humanoid:GetState() == Enum.HumanoidStateType.Freefall or Humanoid:GetState() == Enum.HumanoidStateType.Jumping
-                        
-                        -- 필요할 때만: 거리 안 + 공중이거나 점프 직전
-                        if dist <= Config.Range and (inAir or dist < 8) then
-                            if tick() - lastSpike > Config.SpikeCooldown then
-                                lastSpike = tick()
-                                
-                                -- 자연스럽게 공 방향으로 살짝 이동 (텔레포트 아님)
-                                local dir = (ball.Position - Root.Position).Unit
-                                Root.AssemblyLinearVelocity = Vector3.new(dir.X * 18, Root.AssemblyLinearVelocity.Y, dir.Z * 18)
-                                
-                                -- 점프가 안 되어 있으면 점프
-                                if not inAir then
-                                    Humanoid.Jump = true
-                                end
-                                
-                                -- 클릭
-                                VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
-                                task.wait(0.008)
-                                VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
-                            end
-                        end
-                    end
-                end)
-                task.wait(0.001) -- 거의 0
-            end
-        end)
+local BannerText = Instance.new("TextLabel", Banner)
+BannerText.Size = UDim2.new(1, -16, 1, 0)
+BannerText.Position = UDim2.new(0, 8, 0, 0)
+BannerText.BackgroundTransparency = 1
+BannerText.TextColor3 = Color3.fromRGB(255, 255, 255)
+BannerText.Font = Enum.Font.GothamBold
+BannerText.TextSize = 16
+BannerText.TextXAlignment = Enum.TextXAlignment.Center
+BannerText.Text = ""
+
+local lastKills = {}
+
+local function showKillBanner(killer, victim)
+    if not Config.KillBanner then return end
+    BannerText.Text = killer .. "  →  " .. victim
+    Banner.Visible = true
+    Banner.Position = UDim2.new(0.5, -190, 0, -60)
+    local tw = TweenService:Create(Banner, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+        Position = UDim2.new(0.5, -190, 0, 18)
+    })
+    tw:Play()
+    task.delay(2.2, function()
+        local hide = TweenService:Create(Banner, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+            Position = UDim2.new(0.5, -190, 0, -60)
+        })
+        hide:Play()
+        hide.Completed:Wait()
+        Banner.Visible = false
+    end)
+end
+
+local function setupKillTrack(plr)
+    if plr == LocalPlayer then return end
+    lastKills[plr] = plr:GetAttribute("Kills") or 0
+    plr:GetAttributeChangedSignal("Kills"):Connect(function()
+        local new = plr:GetAttribute("Kills") or 0
+        if new > (lastKills[plr] or 0) then
+            showKillBanner(plr.Name, "Player")
+        end
+        lastKills[plr] = new
+    end)
+end
+
+for _, p in ipairs(Players:GetPlayers()) do setupKillTrack(p) end
+Players.PlayerAdded:Connect(setupKillTrack)
+
+-- Spin
+local spinAngle = 0
+local function doSpin()
+    if not Config.Spin then return end
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    spinAngle = spinAngle + Config.SpinSpeed
+    hrp.CFrame = CFrame.new(hrp.Position) * CFrame.Angles(0, math.rad(spinAngle), 0)
+end
+
+-- GUI
+local gui = Instance.new("ScreenGui", game:GetService("CoreGui"))
+gui.Name = "TTKMenu"
+local f = Instance.new("Frame", gui)
+f.Size = UDim2.new(0, 210, 0, 320)
+f.Position = UDim2.new(0, 10, 0.5, -160)
+f.BackgroundColor3 = Color3.fromRGB(18,18,24)
+f.Active = true
+f.Draggable = true
+Instance.new("UICorner", f).CornerRadius = UDim.new(0,6)
+
+local function makeToggle(name, key)
+    local b = Instance.new("TextButton", f)
+    b.Size = UDim2.new(1, -12, 0, 28)
+    b.Position = UDim2.new(0, 6, 0, (#f:GetChildren()-1)*30 + 6)
+    b.BackgroundColor3 = Color3.fromRGB(32,32,42)
+    b.TextColor3 = Color3.new(1,1,1)
+    b.Font = Enum.Font.Gotham
+    b.TextSize = 12
+    b.Text = name .. ": " .. (Config[key] and "ON" or "OFF")
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0,4)
+    b.MouseButton1Click:Connect(function()
+        Config[key] = not Config[key]
+        b.Text = name .. ": " .. (Config[key] and "ON" or "OFF")
+    end)
+end
+
+makeToggle("Fullbright", "Fullbright")
+makeToggle("ESP", "ESP")
+makeToggle("Silent Aim", "SilentAim")
+makeToggle("Camera Aim", "CameraAim")
+makeToggle("Triggerbot", "Triggerbot")
+makeToggle("Spin", "Spin")
+makeToggle("3rd Person", "ThirdPerson")
+makeToggle("Show FOV", "ShowFOV")
+makeToggle("Show Ally", "ShowAlly")
+makeToggle("Kill Banner", "KillBanner")
+
+UserInputService.InputBegan:Connect(function(i, gpe)
+    if gpe then return end
+    if i.KeyCode == Enum.KeyCode.RightShift then
+        f.Visible = not f.Visible
     end
 end)
 
-MainSec:NewToggle("자동 풀파워 서브", "서브 때 최대 파워", function(v)
-    Config.AutoServe = v
-    if v then
-        task.spawn(function()
-            while Config.AutoServe do
-                pcall(function()
-                    VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
-                    task.wait(0.01)
-                    VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
-                    task.wait(0.05)
-                    VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
-                    task.wait(0.01)
-                    VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
-                end)
-                task.wait(0.45)
-            end
-        end)
+-- Main Loop
+RunService.RenderStepped:Connect(function()
+    updateESP()
+    doSpin()
+    currentTarget = getTarget()
+
+    local center = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+    fovCircle.Position = center
+    fovCircle.Radius = Config.FOV
+    fovCircle.Visible = Config.ShowFOV
+
+    -- Camera Aim
+    if Config.CameraAim and UserInputService:IsMouseButtonPressed(Config.AimKey) and currentTarget and currentTarget.Character then
+        local part = currentTarget.Character:FindFirstChild(Config.AimPart) or currentTarget.Character:FindFirstChild("HumanoidRootPart")
+        if part then
+            local screen = Camera:WorldToViewportPoint(part.Position)
+            local delta = Vector2.new(screen.X - center.X, screen.Y - center.Y)
+            mousemoverel(delta.X * Config.Smooth, delta.Y * Config.Smooth)
+        end
     end
-end)
 
--- ==================== 히트박스 (제대로 붙게) ====================
-local hitboxPart = nil
-
-MainSec:NewToggle("히트박스 확장", "공에 강제 부착", function(v)
-    Config.Hitbox = v
-    if v then
-        task.spawn(function()
-            while Config.Hitbox do
-                pcall(function()
-                    local ball = getBall()
-                    if ball then
-                        if not hitboxPart or not hitboxPart.Parent then
-                            hitboxPart = Instance.new("Part")
-                            hitboxPart.Name = "OnyxHitbox"
-                            hitboxPart.Anchored = true
-                            hitboxPart.CanCollide = false
-                            hitboxPart.Transparency = 0.6
-                            hitboxPart.Material = Enum.Material.ForceField
-                            hitboxPart.Color = Color3.fromRGB(0, 255, 100)
-                            hitboxPart.Parent = workspace
-                        end
-                        hitboxPart.Size = Vector3.new(Config.HitboxSize, Config.HitboxSize, Config.HitboxSize)
-                        hitboxPart.CFrame = ball.CFrame
-                    end
-                end)
-                task.wait(0.001)
+    -- Triggerbot
+    if Config.Triggerbot and currentTarget and currentTarget.Character then
+        local part = currentTarget.Character:FindFirstChild(Config.AimPart) or currentTarget.Character:FindFirstChild("HumanoidRootPart")
+        if part then
+            local screen, on = Camera:WorldToViewportPoint(part.Position)
+            if on then
+                local mag = (Vector2.new(screen.X, screen.Y) - center).Magnitude
+                if mag < 40 then
+                    mouse1click()
+                end
             end
-        end)
-    else
-        if hitboxPart then
-            hitboxPart:Destroy()
-            hitboxPart = nil
         end
     end
 end)
 
--- ==================== 수치 직접 입력 ====================
-SetSec:NewTextBox("스파이크 범위 (최대 25 추천)", "숫자 입력", function(txt)
-    local n = tonumber(txt)
-    if n then Config.Range = math.clamp(n, 1, 40) end
-end)
-
-SetSec:NewTextBox("히트박스 크기 (최대 20 추천)", "숫자 입력", function(txt)
-    local n = tonumber(txt)
-    if n then Config.HitboxSize = math.clamp(n, 1, 30) end
-end)
-
-SetSec:NewTextBox("WalkSpeed (최대 35 추천)", "숫자 입력", function(txt)
-    local n = tonumber(txt)
-    if n then
-        Config.WalkSpeed = math.clamp(n, 16, 50)
-        if Config.Speed and Humanoid then
-            Humanoid.WalkSpeed = Config.WalkSpeed
-        end
-    end
-end)
-
-SetSec:NewTextBox("JumpPower (최대 90 추천)", "숫자 입력", function(txt)
-    local n = tonumber(txt)
-    if n then
-        Config.JumpPower = math.clamp(n, 50, 120)
-        if Config.Jump and Humanoid then
-            Humanoid.JumpPower = Config.JumpPower
-        end
-    end
-end)
-
-SetSec:NewLabel("현재 값 확인은 토글 켠 뒤 직접 체감하면 됨")
-
--- ==================== 이동 ====================
-MoveSec:NewToggle("스피드", "", function(v)
-    Config.Speed = v
-    if Humanoid then
-        Humanoid.WalkSpeed = v and Config.WalkSpeed or 16
-    end
-end)
-
-MoveSec:NewToggle("점프 부스트", "", function(v)
-    Config.Jump = v
-    if Humanoid then
-        Humanoid.JumpPower = v and Config.JumpPower or 50
-    end
-end)
-
--- ==================== ESP ====================
-local hl = nil
-
-VisSec:NewToggle("공 ESP", "", function(v)
-    Config.ESP = v
-    if not v and hl then
-        hl:Destroy()
-        hl = nil
-    end
-    if v then
-        task.spawn(function()
-            while Config.ESP do
-                pcall(function()
-                    local ball = getBall()
-                    if ball then
-                        if not hl or hl.Adornee ~= ball then
-                            if hl then hl:Destroy() end
-                            hl = Instance.new("Highlight")
-                            hl.FillColor = Color3.fromRGB(0, 255, 100)
-                            hl.OutlineColor = Color3.fromRGB(255, 255, 255)
-                            hl.FillTransparency = 0.35
-                            hl.Adornee = ball
-                            hl.Parent = ball
-                        end
-                    end
-                end)
-                task.wait(0.05)
-            end
-        end)
-    end
-end)
-
-print("[Onyx] v4 로드 완료 - 필요할 때만 스파이크 + 숫자 입력 지원")
+print("[TTK] Full + Spin + Trigger + 3rd Person Loaded")
