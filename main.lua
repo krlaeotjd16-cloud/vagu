@@ -1,4 +1,4 @@
--- TTK Full | ESP + Fullbright + Silent + Aim + Kill Banner + Spin + Trigger + 3rd Person + GUI
+-- TTK Full | ESP + Fullbright + Silent + Camera Aim + Kill Banner + Wall Check + Team Check + GUI
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
@@ -15,18 +15,16 @@ local Config = {
     SilentAim = true,
     CameraAim = true,
     Triggerbot = false,
-    Spin = false,
-    ThirdPerson = true,
     AimKey = Enum.UserInputType.MouseButton2,
     AimPart = "Head",
     FOV = 180,
     ShowFOV = true,
     Smooth = 0.35,
     TeamCheck = true,
+    WallCheck = true,
     ShowAlly = true,
     MaxESPDistance = 5000,
-    KillBanner = true,
-    SpinSpeed = 25
+    KillBanner = true
 }
 
 -- Fullbright
@@ -41,17 +39,6 @@ local function applyFullbright()
     Lighting.ExposureCompensation = 0.3
 end
 RunService.Heartbeat:Connect(applyFullbright)
-
--- 3rd Person Force
-local function forceThirdPerson()
-    if not Config.ThirdPerson then return end
-    pcall(function()
-        LocalPlayer.CameraMode = Enum.CameraMode.Classic
-        LocalPlayer.CameraMaxZoomDistance = 128
-        LocalPlayer.CameraMinZoomDistance = 10
-    end)
-end
-RunService.Heartbeat:Connect(forceThirdPerson)
 
 -- GunController Hook
 local GunController
@@ -95,6 +82,18 @@ end
 
 local function isAllyModel(model)
     return model:FindFirstChild("AllyTeamHighlight") ~= nil
+end
+
+local function isVisible(part)
+    if not Config.WallCheck then return true end
+    if not part then return false end
+    local origin = Camera.CFrame.Position
+    local direction = part.Position - origin
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = {LocalPlayer.Character, part.Parent}
+    local result = Workspace:Raycast(origin, direction, params)
+    return result == nil
 end
 
 -- ESP
@@ -199,7 +198,7 @@ local function getTarget()
             local hum = p.Character:FindFirstChildOfClass("Humanoid")
             if hum and hum.Health > 0 then
                 local part = p.Character:FindFirstChild(Config.AimPart) or p.Character:FindFirstChild("HumanoidRootPart")
-                if part then
+                if part and isVisible(part) then
                     local screen, on = Camera:WorldToViewportPoint(part.Position)
                     if on then
                         local mag = (Vector2.new(screen.X, screen.Y) - center).Magnitude
@@ -289,24 +288,12 @@ end
 for _, p in ipairs(Players:GetPlayers()) do setupKillTrack(p) end
 Players.PlayerAdded:Connect(setupKillTrack)
 
--- Spin
-local spinAngle = 0
-local function doSpin()
-    if not Config.Spin then return end
-    local char = LocalPlayer.Character
-    if not char then return end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
-    spinAngle = spinAngle + Config.SpinSpeed
-    hrp.CFrame = CFrame.new(hrp.Position) * CFrame.Angles(0, math.rad(spinAngle), 0)
-end
-
 -- GUI
 local gui = Instance.new("ScreenGui", game:GetService("CoreGui"))
 gui.Name = "TTKMenu"
 local f = Instance.new("Frame", gui)
-f.Size = UDim2.new(0, 210, 0, 320)
-f.Position = UDim2.new(0, 10, 0.5, -160)
+f.Size = UDim2.new(0, 210, 0, 300)
+f.Position = UDim2.new(0, 10, 0.5, -150)
 f.BackgroundColor3 = Color3.fromRGB(18,18,24)
 f.Active = true
 f.Draggable = true
@@ -333,8 +320,8 @@ makeToggle("ESP", "ESP")
 makeToggle("Silent Aim", "SilentAim")
 makeToggle("Camera Aim", "CameraAim")
 makeToggle("Triggerbot", "Triggerbot")
-makeToggle("Spin", "Spin")
-makeToggle("3rd Person", "ThirdPerson")
+makeToggle("Wall Check", "WallCheck")
+makeToggle("Team Check", "TeamCheck")
 makeToggle("Show FOV", "ShowFOV")
 makeToggle("Show Ally", "ShowAlly")
 makeToggle("Kill Banner", "KillBanner")
@@ -349,7 +336,6 @@ end)
 -- Main Loop
 RunService.RenderStepped:Connect(function()
     updateESP()
-    doSpin()
     currentTarget = getTarget()
 
     local center = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
@@ -360,7 +346,7 @@ RunService.RenderStepped:Connect(function()
     -- Camera Aim
     if Config.CameraAim and UserInputService:IsMouseButtonPressed(Config.AimKey) and currentTarget and currentTarget.Character then
         local part = currentTarget.Character:FindFirstChild(Config.AimPart) or currentTarget.Character:FindFirstChild("HumanoidRootPart")
-        if part then
+        if part and isVisible(part) then
             local screen = Camera:WorldToViewportPoint(part.Position)
             local delta = Vector2.new(screen.X - center.X, screen.Y - center.Y)
             mousemoverel(delta.X * Config.Smooth, delta.Y * Config.Smooth)
@@ -370,7 +356,7 @@ RunService.RenderStepped:Connect(function()
     -- Triggerbot
     if Config.Triggerbot and currentTarget and currentTarget.Character then
         local part = currentTarget.Character:FindFirstChild(Config.AimPart) or currentTarget.Character:FindFirstChild("HumanoidRootPart")
-        if part then
+        if part and isVisible(part) then
             local screen, on = Camera:WorldToViewportPoint(part.Position)
             if on then
                 local mag = (Vector2.new(screen.X, screen.Y) - center).Magnitude
@@ -382,4 +368,4 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
-print("[TTK] Full + Spin + Trigger + 3rd Person Loaded")
+print("[TTK] Full Loaded | Wall + Team Check | RightShift for GUI")
